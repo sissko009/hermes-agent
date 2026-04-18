@@ -4,6 +4,26 @@ Instructions for AI coding assistants and developers working on the hermes-agent
 
 **Never give up on the right solution.**
 
+## Session Startup (Kossan custom policy)
+
+Before any Hermes-side work in this repository, read `KOSSAN_POLICY.md` first and follow it as the repo-specific operating policy. Also read `HERMES_SELF_IMPROVEMENT.md` so session behavior reflects the current self-improvement operating model, not just git/push safety rules.
+
+Minimum required checks at session start:
+1. Read `KOSSAN_POLICY.md`
+2. Read `HERMES_SELF_IMPROVEMENT.md`
+3. Run `git fetch origin && git status`
+4. Confirm you are working on `kossan-custom` or a `kossan-custom/<topic>` branch for manual edits
+
+Critical reminders from `KOSSAN_POLICY.md`:
+- `origin` is the push target (kossan fork), `upstream` is pull-only (NousResearch)
+- `main` is mirror/sync only — do not manually commit there
+- Use `--force-with-lease` instead of `--force`, and only with explicit user approval
+- Do not use `--no-verify`
+- Before push, run `git pull --rebase origin kossan-custom`
+- If unsure, stop and ask
+
+If you launch a Hermes/Claude Code session manually, it is acceptable to paste the contents (or a concise rules summary) of `KOSSAN_POLICY.md` into that session's system prompt as an additional safeguard.
+
 ## Development Environment
 
 ```bash
