@@ -26,6 +26,7 @@ from hermes_cli.auth import (
     _auth_store_lock,
     _codex_access_token_is_expiring,
     _decode_jwt_claims,
+    _import_codex_cli_tokens,
     _load_auth_store,
     _load_provider_state,
     _resolve_kimi_base_url,
@@ -33,6 +34,7 @@ from hermes_cli.auth import (
     _save_auth_store,
     _save_provider_state,
     _store_provider_state,
+    _write_codex_cli_tokens,
     read_credential_pool,
     write_credential_pool,
 )
@@ -696,6 +698,41 @@ class CredentialPool:
             logger.debug("Failed to sync xAI OAuth entry from auth.json: %s", exc)
         return entry
 
+    def _sync_codex_entry_from_cli(self, entry: PooledCredential) -> PooledCredential:
+        """Sync an openai-codex pool entry from ~/.codex/auth.json if tokens differ.
+
+        OpenAI OAuth refresh tokens are single-use. If the Codex CLI or VS Code
+        extension refreshed first, the pool entry's refresh token is stale. When
+        the shared file has a newer valid pair, adopt it before refreshing.
+        """
+        if self.provider != "openai-codex":
+            return entry
+        try:
+            cli_tokens = _import_codex_cli_tokens()
+            if not cli_tokens:
+                return entry
+            cli_refresh = cli_tokens.get("refresh_token", "")
+            cli_access = cli_tokens.get("access_token", "")
+            if cli_refresh and cli_refresh != entry.refresh_token:
+                logger.debug("Pool entry %s: syncing tokens from ~/.codex/auth.json (refresh token changed)", entry.id)
+                updated = replace(
+                    entry,
+                    access_token=cli_access,
+                    refresh_token=cli_refresh,
+                    last_status=None,
+                    last_status_at=None,
+                    last_error_code=None,
+                    last_error_reason=None,
+                    last_error_message=None,
+                    last_error_reset_at=None,
+                )
+                self._replace_entry(entry, updated)
+                self._persist()
+                return updated
+        except Exception as exc:
+            logger.debug("Failed to sync from ~/.codex/auth.json: %s", exc)
+        return entry
+
     def _sync_nous_entry_from_auth_store(self, entry: PooledCredential) -> PooledCredential:
         """Sync a Nous pool entry from auth.json if tokens differ.
 
@@ -897,6 +934,9 @@ class CredentialPool:
                 synced = self._sync_codex_entry_from_auth_store(entry)
                 if synced is not entry:
                     entry = synced
+                synced = self._sync_codex_entry_from_cli(entry)
+                if synced is not entry:
+                    entry = synced
                 refreshed = auth_mod.refresh_codex_oauth_pure(
                     entry.access_token,
                     entry.refresh_token,
@@ -1052,9 +1092,11 @@ class CredentialPool:
             # if they have rotated since.
             if self.provider == "openai-codex":
                 synced = self._sync_codex_entry_from_auth_store(entry)
+                if synced.refresh_token == entry.refresh_token:
+                    synced = self._sync_codex_entry_from_cli(entry)
                 if synced.refresh_token != entry.refresh_token:
                     logger.debug(
-                        "Codex OAuth refresh failed but auth.json has newer tokens — adopting"
+                        "Codex OAuth refresh failed but auth.json/CLI has newer tokens — adopting"
                     )
                     updated = replace(
                         synced,
@@ -1068,11 +1110,10 @@ class CredentialPool:
                     self._replace_entry(synced, updated)
                     self._persist()
                     return updated
-                # Terminal error: auth.json has no newer tokens — the stored
-                # refresh_token is dead.  Clear it from auth.json so the next
+                # Terminal error: no newer tokens were available — the stored
+                # refresh_token is dead. Clear shared token state so the next
                 # session does not re-seed the same revoked credentials, and
-                # remove all singleton-seeded (device_code) entries from the
-                # in-memory pool.  Mirrors the xAI and Nous quarantine paths.
+                # remove singleton-seeded (device_code) entries from memory.
                 if auth_mod._is_terminal_codex_oauth_refresh_error(exc):
                     logger.debug(
                         "Codex OAuth refresh token is terminally invalid; clearing local token state"
@@ -1112,6 +1153,46 @@ class CredentialPool:
                         self._current_id = None
                     self._persist()
                     return None
+                # Another client may have consumed the refresh token between our
+                # proactive sync and the HTTP call. Re-sync and retry once if a
+                # fresher pair is now available.
+                if synced.refresh_token != entry.refresh_token:
+                    logger.debug("Retrying Codex refresh with synced tokens")
+                    try:
+                        refreshed = auth_mod.refresh_codex_oauth_pure(
+                            synced.access_token,
+                            synced.refresh_token,
+                        )
+                        updated = replace(
+                            synced,
+                            access_token=refreshed["access_token"],
+                            refresh_token=refreshed["refresh_token"],
+                            last_refresh=refreshed.get("last_refresh"),
+                            last_status=STATUS_OK,
+                            last_status_at=None,
+                            last_error_code=None,
+                            last_error_reason=None,
+                            last_error_message=None,
+                            last_error_reset_at=None,
+                        )
+                        self._replace_entry(synced, updated)
+                        self._persist()
+                        self._sync_device_code_entry_to_auth_store(updated)
+                        try:
+                            _write_codex_cli_tokens(
+                                updated.access_token,
+                                updated.refresh_token,
+                                last_refresh=updated.last_refresh,
+                            )
+                        except Exception as wexc:
+                            logger.debug("Failed to write refreshed Codex tokens to CLI file (retry): %s", wexc)
+                        return updated
+                    except Exception as retry_exc:
+                        logger.debug("Codex retry refresh also failed: %s", retry_exc)
+                elif not self._entry_needs_refresh(synced):
+                    logger.debug("Codex synced token is valid, using without refresh")
+                    self._sync_device_code_entry_to_auth_store(synced)
+                    return synced
             # For nous: another process may have consumed the refresh token
             # between our proactive sync and the HTTP call.  Re-sync from
             # auth.json and adopt the fresh tokens if available.
@@ -1193,6 +1274,16 @@ class CredentialPool:
         # _seed_from_singletons() on the next load_pool() sees fresh state
         # instead of re-seeding stale/consumed tokens.
         self._sync_device_code_entry_to_auth_store(updated)
+        # Keep Codex CLI / VS Code aligned after Hermes rotates a refresh token.
+        if self.provider == "openai-codex":
+            try:
+                _write_codex_cli_tokens(
+                    updated.access_token,
+                    updated.refresh_token,
+                    last_refresh=updated.last_refresh,
+                )
+            except Exception as wexc:
+                logger.debug("Failed to write refreshed Codex tokens to CLI file: %s", wexc)
         return updated
 
     def _entry_needs_refresh(self, entry: PooledCredential) -> bool:
@@ -1264,6 +1355,8 @@ class CredentialPool:
                     and entry.source == "device_code"
                     and entry.last_status in {STATUS_EXHAUSTED, STATUS_DEAD}):
                 synced = self._sync_codex_entry_from_auth_store(entry)
+                if synced is entry:
+                    synced = self._sync_codex_entry_from_cli(entry)
                 if synced is not entry:
                     entry = synced
                     cleared_any = True
