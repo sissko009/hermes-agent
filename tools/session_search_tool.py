@@ -17,6 +17,7 @@ Flow:
 
 import asyncio
 import concurrent.futures
+from datetime import datetime, timedelta
 import json
 import logging
 import re
@@ -25,6 +26,32 @@ from typing import Dict, Any, List, Optional, Union
 from agent.auxiliary_client import async_call_llm, extract_content_or_reasoning
 MAX_SESSION_CHARS = 100_000
 MAX_SUMMARY_TOKENS = 10000
+
+
+_DATE_QUERY_PATTERNS = (
+    re.compile(r"(?P<year>\d{4})[-/](?P<month>\d{1,2})[-/](?P<day>\d{1,2})"),
+    re.compile(r"(?:(?P<year>\d{4})年)?(?P<month>\d{1,2})月(?P<day>\d{1,2})日"),
+    re.compile(r"(?:(?P<year>\d{4})/)?(?P<month>\d{1,2})/(?P<day>\d{1,2})"),
+)
+
+_DATE_ONLY_FILLER_PATTERNS = (
+    re.compile(r"(?i)\bwhat\s+did\s+i\s+do\b"),
+    re.compile(r"(?i)\bwhat\s+happened\b"),
+    re.compile(r"(?i)\bwhat\s+were\s+we\s+working\s+on\b"),
+    re.compile(r"(?i)\bwhat\s+were\s+we\s+doing\b"),
+    re.compile(r"(?i)\bon\b"),
+    re.compile(r"何した"),
+    re.compile(r"何してた"),
+    re.compile(r"何をした"),
+    re.compile(r"なにした"),
+    re.compile(r"何やった"),
+    re.compile(r"何してたっけ"),
+    re.compile(r"何をやった"),
+    re.compile(r"何していた"),
+    re.compile(r"何があった"),
+    re.compile(r"何やってた"),
+    re.compile(r"に"),
+)
 
 
 def _format_timestamp(ts: Union[int, float, str, None]) -> str:
@@ -85,6 +112,107 @@ def _format_conversation(messages: List[Dict[str, Any]]) -> str:
             parts.append(f"[{role}]: {content}")
 
     return "\n\n".join(parts)
+
+
+def _extract_date_filter(
+    query: str,
+    now: Optional[datetime] = None,
+) -> Optional[Dict[str, Any]]:
+    """Extract a single-day date filter from the query, if present."""
+    now = now or datetime.now()
+    for pattern in _DATE_QUERY_PATTERNS:
+        match = pattern.search(query)
+        if not match:
+            continue
+        try:
+            year_text = match.groupdict().get("year")
+            year = int(year_text) if year_text else now.year
+            month = int(match.group("month"))
+            day = int(match.group("day"))
+            day_start = datetime(year, month, day)
+        except (TypeError, ValueError):
+            continue
+
+        day_end = day_start + timedelta(days=1)
+        remainder = (query[:match.start()] + " " + query[match.end():]).strip()
+        return {
+            "year": year,
+            "month": month,
+            "day": day,
+            "label": day_start.strftime("%Y-%m-%d"),
+            "start_ts": day_start.timestamp(),
+            "end_ts": day_end.timestamp(),
+            "remainder": remainder,
+            "matched_text": match.group(0),
+        }
+    return None
+
+
+def _is_date_only_question(text: str) -> bool:
+    """Heuristic: query is effectively just asking what happened on a date."""
+    cleaned = text
+    for pattern in _DATE_ONLY_FILLER_PATTERNS:
+        cleaned = pattern.sub(" ", cleaned)
+    cleaned = re.sub(r"[？?！!。、,，.\s'\"“”‘’:\-_/]+", "", cleaned)
+    return cleaned == ""
+
+
+def _list_sessions_for_date(
+    db,
+    start_ts: float,
+    end_ts: float,
+    date_label: str,
+    current_session_id: str = None,
+    limit: int = 20,
+) -> str:
+    """Return recent-session style metadata for sessions started on a date."""
+    try:
+        sessions = db.list_sessions_rich(
+            limit=max(limit * 20, 100),
+            exclude_sources=list(_HIDDEN_SESSION_SOURCES),
+        )
+
+        results = []
+        for s in sessions:
+            sid = s.get("id", "")
+            if current_session_id and sid == current_session_id:
+                continue
+            started_at = s.get("started_at")
+            if started_at is None:
+                continue
+            try:
+                started_float = float(started_at)
+            except (TypeError, ValueError):
+                continue
+            if not (start_ts <= started_float < end_ts):
+                continue
+            results.append({
+                "session_id": sid,
+                "title": s.get("title") or None,
+                "source": s.get("source", ""),
+                "started_at": s.get("started_at", ""),
+                "last_active": s.get("last_active", ""),
+                "message_count": s.get("message_count", 0),
+                "preview": s.get("preview", ""),
+            })
+            if len(results) >= limit:
+                break
+
+        return json.dumps({
+            "success": True,
+            "mode": "date",
+            "date": date_label,
+            "results": results,
+            "count": len(results),
+            "message": (
+                f"Showing {len(results)} sessions from {date_label}."
+                if results
+                else f"No sessions found from {date_label}."
+            ),
+        }, ensure_ascii=False)
+    except Exception as e:
+        logging.error("Error listing sessions for date %s: %s", date_label, e, exc_info=True)
+        return tool_error(f"Failed to list sessions for {date_label}: {e}", success=False)
 
 
 def _truncate_around_matches(
@@ -318,6 +446,16 @@ def session_search(
         return _list_recent_sessions(db, limit, current_session_id)
 
     query = query.strip()
+    date_filter = _extract_date_filter(query)
+    if date_filter and _is_date_only_question(date_filter.get("remainder", "")):
+        return _list_sessions_for_date(
+            db,
+            start_ts=date_filter["start_ts"],
+            end_ts=date_filter["end_ts"],
+            date_label=date_filter["label"],
+            current_session_id=current_session_id,
+            limit=limit,
+        )
 
     try:
         # Parse role filter
@@ -333,14 +471,24 @@ def session_search(
             limit=50,  # Get more matches to find unique sessions
             offset=0,
         )
+        if date_filter:
+            raw_results = [
+                result for result in raw_results
+                if date_filter["start_ts"] <= float(result.get("session_started", 0)) < date_filter["end_ts"]
+            ]
 
         if not raw_results:
+            message = (
+                f"No matching sessions found for {date_filter['label']}."
+                if date_filter
+                else "No matching sessions found."
+            )
             return json.dumps({
                 "success": True,
                 "query": query,
                 "results": [],
                 "count": 0,
-                "message": "No matching sessions found.",
+                "message": message,
             }, ensure_ascii=False)
 
         # Resolve child sessions to their parent — delegation stores detailed
@@ -509,7 +657,8 @@ SESSION_SEARCH_SCHEMA = {
         "Don't hesitate to search when it is actually cross-session -- it's fast and cheap. "
         "Better to search and confirm than to guess or ask the user to repeat themselves.\n\n"
         "Search syntax: keywords joined with OR for broad recall (elevenlabs OR baseten OR funding), "
-        "phrases for exact match (\"docker networking\"), boolean (python NOT java), prefix (deploy*). "
+        "phrases for exact match (\"docker networking\"), boolean (python NOT java), prefix (deploy*), "
+        "and date lookups like 2026-04-15, 4/15, or 4月15日. "
         "IMPORTANT: Use OR between keywords for best results — FTS5 defaults to AND which misses "
         "sessions that only mention some terms. If a broad OR query returns nothing, try individual "
         "keyword searches in parallel. Returns summaries of the top matching sessions."

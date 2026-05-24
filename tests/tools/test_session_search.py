@@ -8,6 +8,8 @@ from tools.session_search_tool import (
     _format_timestamp,
     _format_conversation,
     _truncate_around_matches,
+    _extract_date_filter,
+    _is_date_only_question,
     _HIDDEN_SESSION_SOURCES,
     MAX_SESSION_CHARS,
     SESSION_SEARCH_SCHEMA,
@@ -182,6 +184,30 @@ class TestTruncateAroundMatches:
 
 
 # =========================================================================
+# Date query helpers
+# =========================================================================
+
+class TestDateQueryHelpers:
+    def test_extract_date_filter_japanese_date_defaults_current_year(self):
+        from datetime import datetime
+
+        result = _extract_date_filter("4月15日に何した？", now=datetime(2026, 5, 1))
+        assert result is not None
+        assert result["label"] == "2026-04-15"
+        assert "何した" in result["remainder"]
+
+    def test_extract_date_filter_iso_date(self):
+        result = _extract_date_filter("what did I do on 2025-12-31")
+        assert result is not None
+        assert result["label"] == "2025-12-31"
+
+    def test_is_date_only_question_detects_fillers(self):
+        assert _is_date_only_question("に何した？") is True
+        assert _is_date_only_question("what did I do on") is True
+        assert _is_date_only_question("docker incident") is False
+
+
+# =========================================================================
 # session_search (dispatcher)
 # =========================================================================
 
@@ -289,6 +315,72 @@ class TestSessionSearch:
         assert result["count"] == 0
         assert result["results"] == []
         assert result["sessions_searched"] == 0
+
+    def test_date_only_query_lists_sessions_for_that_day(self):
+        from unittest.mock import MagicMock
+        from tools.session_search_tool import session_search
+
+        mock_db = MagicMock()
+        april_15 = time.mktime((2026, 4, 15, 9, 0, 0, 0, 0, -1))
+        april_16 = time.mktime((2026, 4, 16, 9, 0, 0, 0, 0, -1))
+        mock_db.list_sessions_rich.return_value = [
+            {
+                "id": "s1",
+                "source": "cli",
+                "started_at": april_15,
+                "last_active": april_15,
+                "message_count": 3,
+                "preview": "Worked on session search",
+                "title": "Session search work",
+            },
+            {
+                "id": "s2",
+                "source": "cli",
+                "started_at": april_16,
+                "last_active": april_16,
+                "message_count": 2,
+                "preview": "Worked on something else",
+                "title": "Other work",
+            },
+        ]
+
+        result = json.loads(session_search(query="4月15日に何した？", db=mock_db))
+
+        assert result["success"] is True
+        assert result["mode"] == "date"
+        assert result["date"] == "2026-04-15"
+        assert result["count"] == 1
+        assert result["results"][0]["session_id"] == "s1"
+        mock_db.search_messages.assert_not_called()
+
+    def test_date_and_keyword_query_filters_fts_results_by_day(self):
+        from unittest.mock import AsyncMock, MagicMock, patch as _patch
+        from tools.session_search_tool import session_search
+
+        mock_db = MagicMock()
+        april_15 = time.mktime((2026, 4, 15, 9, 0, 0, 0, 0, -1))
+        april_16 = time.mktime((2026, 4, 16, 9, 0, 0, 0, 0, -1))
+        mock_db.search_messages.return_value = [
+            {"session_id": "s1", "content": "docker match", "source": "cli",
+             "session_started": april_15, "model": "test"},
+            {"session_id": "s2", "content": "docker match", "source": "cli",
+             "session_started": april_16, "model": "test"},
+        ]
+        mock_db.get_session.return_value = {"parent_session_id": None}
+        mock_db.get_messages_as_conversation.return_value = [
+            {"role": "user", "content": "docker"},
+            {"role": "assistant", "content": "fixed it"},
+        ]
+
+        with _patch("tools.session_search_tool.async_call_llm",
+                     new_callable=AsyncMock,
+                     side_effect=RuntimeError("no provider")):
+            result = json.loads(session_search(query="docker 2026-04-15", db=mock_db))
+
+        assert result["success"] is True
+        assert result["count"] == 1
+        assert result["results"][0]["session_id"] == "s1"
+        assert result["sessions_searched"] == 1
 
     def test_current_root_session_excludes_child_lineage(self):
         """Delegation child hits should be excluded when they resolve to the current root session."""
