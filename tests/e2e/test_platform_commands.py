@@ -65,6 +65,38 @@ class TestSlashCommands:
         assert "/" in response_text
 
     @pytest.mark.asyncio
+    async def test_goal_returns_scaffold(self, adapter, platform):
+        send = await send_and_capture(adapter, "/goal Build OAuth login", platform)
+
+        send.assert_called_once()
+        response_text = send.call_args[1].get("content") or send.call_args[0][1]
+        assert "Hermes /goal Expansion" in response_text
+        assert "/goal Build OAuth login" in response_text
+        assert "Verifier:" in response_text
+
+    @pytest.mark.asyncio
+    async def test_kanban_routes_into_agent_prompt(self, adapter, runner, platform):
+        runner._run_agent = AsyncMock(
+            return_value={
+                "final_response": "unused",
+                "messages": [],
+                "tools": [],
+                "history_offset": 0,
+                "last_prompt_tokens": 0,
+            }
+        )
+
+        send = await send_and_capture(adapter, "/kanban Build OAuth login", platform)
+
+        send.assert_called()
+        runner._run_agent.assert_awaited_once()
+        message_text = runner._run_agent.await_args.kwargs["message"]
+        assert "Operate in kanban mode" in message_text
+        assert "Build OAuth login" in message_text
+        assert "todo" in message_text
+        assert "delegate_task" in message_text
+
+    @pytest.mark.asyncio
     async def test_sequential_commands_share_session(self, adapter, platform):
         """Two commands from the same chat_id should both succeed."""
         send_help = await send_and_capture(adapter, "/help", platform)

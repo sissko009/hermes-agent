@@ -5501,6 +5501,10 @@ class HermesCLI:
             self._handle_stop_command()
         elif canonical == "background":
             self._handle_background_command(cmd_original)
+        elif canonical == "goal":
+            self._handle_goal_command(cmd_original)
+        elif canonical == "kanban":
+            self._handle_kanban_command(cmd_original)
         elif canonical == "btw":
             self._handle_btw_command(cmd_original)
         elif canonical == "queue":
@@ -5649,6 +5653,35 @@ class HermesCLI:
             self._pending_input.put(msg)
         else:
             ChatConsole().print("[bold red]Plan mode unavailable: input queue not initialized[/]")
+    
+    def _handle_goal_command(self, cmd: str):
+        """Handle /goal <goal> — emit a deterministic goal-loop scaffold."""
+        from hermes_cli.goal_command import build_goal_command_output
+
+        goal = cmd.split(None, 1)[1].strip() if " " in cmd else ""
+        for line in build_goal_command_output(goal).splitlines():
+            _cprint(line)
+
+    def _handle_kanban_command(self, cmd: str):
+        """Handle /kanban <request> — queue a kanban-style execution prompt."""
+        from hermes_cli.kanban_command import (
+            build_kanban_command_notice,
+            build_kanban_command_prompt,
+            build_kanban_command_usage,
+        )
+
+        request = cmd.split(None, 1)[1].strip() if " " in cmd else ""
+        prompt = build_kanban_command_prompt(request)
+        if not prompt:
+            for line in build_kanban_command_usage().splitlines():
+                _cprint(line)
+            return
+
+        _cprint(build_kanban_command_notice(request))
+        if hasattr(self, '_pending_input'):
+            self._pending_input.put(prompt)
+        else:
+            ChatConsole().print("[bold red]Kanban mode unavailable: input queue not initialized[/]")
     
     def _handle_background_command(self, cmd: str):
         """Handle /background <prompt> — run a prompt in a separate background session.

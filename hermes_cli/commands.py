@@ -85,6 +85,10 @@ COMMAND_REGISTRY: list[CommandDef] = [
                gateway_only=True),
     CommandDef("background", "Run a prompt in the background", "Session",
                aliases=("bg",), args_hint="<prompt>"),
+    CommandDef("goal", "Expand a high-level goal into Codex + Claude Code execution scaffolds", "Session",
+               args_hint="<goal>"),
+    CommandDef("kanban", "Queue a kanban-style execution prompt using todo + delegate_task", "Session",
+               args_hint="<request>"),
     CommandDef("btw", "Ephemeral side question using session context (no tools, not persisted)", "Session",
                args_hint="<question>"),
     CommandDef("queue", "Queue a prompt for the next turn (doesn't interrupt)", "Session",
@@ -93,6 +97,7 @@ COMMAND_REGISTRY: list[CommandDef] = [
     CommandDef("profile", "Show active profile name and home directory", "Info"),
     CommandDef("sethome", "Set this chat as the home channel", "Session",
                gateway_only=True, aliases=("set-home",)),
+
     CommandDef("resume", "Resume a previously-named session", "Session",
                args_hint="[name]"),
 

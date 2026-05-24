@@ -2860,6 +2860,15 @@ class GatewayRunner:
         if canonical == "background":
             return await self._handle_background_command(event)
 
+        if canonical == "goal":
+            return await self._handle_goal_command(event)
+
+        if canonical == "kanban":
+            result = await self._handle_kanban_command(event)
+            if result is not None:
+                return result
+            canonical = None
+
         if canonical == "btw":
             return await self._handle_btw_command(event)
 
@@ -5370,6 +5379,26 @@ class GatewayRunner:
                 f"A pre-rollback snapshot was saved automatically."
             )
         return f"❌ {result['error']}"
+
+    async def _handle_goal_command(self, event: MessageEvent) -> str:
+        """Handle /goal <goal> — return a deterministic goal-loop scaffold."""
+        from hermes_cli.goal_command import build_goal_command_output
+
+        return build_goal_command_output(event.get_command_args().strip())
+
+    async def _handle_kanban_command(self, event: MessageEvent) -> str | None:
+        """Handle /kanban <request> — rewrite into a kanban execution prompt."""
+        from hermes_cli.kanban_command import (
+            build_kanban_command_prompt,
+            build_kanban_command_usage,
+        )
+
+        prompt = build_kanban_command_prompt(event.get_command_args().strip())
+        if not prompt:
+            return build_kanban_command_usage()
+
+        event.text = prompt
+        return None
 
     async def _handle_background_command(self, event: MessageEvent) -> str:
         """Handle /background <prompt> — run a prompt in a separate background session.

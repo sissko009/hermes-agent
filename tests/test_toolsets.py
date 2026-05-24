@@ -47,6 +47,23 @@ class TestResolveToolset:
         assert "web_search" in tools
         assert "web_extract" in tools
 
+    def test_kanban_toolset_resolves_todo_and_delegate(self):
+        tools = resolve_toolset("kanban")
+        assert "todo" in tools
+        assert "delegate_task" in tools
+
+    def test_x_search_toolset_resolves_search_tool(self):
+        tools = resolve_toolset("x_search")
+        assert tools == ["x_search"]
+
+    def test_video_gen_toolset_resolves_video_generate(self):
+        tools = resolve_toolset("video_gen")
+        assert tools == ["video_generate"]
+
+    def test_codex_toolset_resolves_codex_task(self):
+        tools = resolve_toolset("codex")
+        assert tools == ["codex_task"]
+
     def test_cycle_detection(self):
         # Create a cycle: A includes B, B includes A
         TOOLSETS["_cycle_a"] = {"description": "test", "tools": ["t1"], "includes": ["_cycle_b"]}

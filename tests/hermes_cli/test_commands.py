@@ -93,6 +93,8 @@ class TestResolveCommand:
     def test_canonical_name_resolves(self):
         assert resolve_command("help").name == "help"
         assert resolve_command("background").name == "background"
+        assert resolve_command("goal").name == "goal"
+        assert resolve_command("kanban").name == "kanban"
 
     def test_alias_resolves_to_canonical(self):
         assert resolve_command("bg").name == "background"
@@ -198,6 +200,16 @@ class TestGatewayHelpLines:
         bg_line = [l for l in lines if "/background" in l]
         assert len(bg_line) == 1
         assert "/bg" in bg_line[0]
+
+    def test_goal_appears_in_gateway_help(self):
+        lines = gateway_help_lines()
+        joined = "\n".join(lines)
+        assert "`/goal <goal>`" in joined
+
+    def test_kanban_appears_in_gateway_help(self):
+        lines = gateway_help_lines()
+        joined = "\n".join(lines)
+        assert "`/kanban <request>`" in joined
 
 
 class TestTelegramBotCommands:
