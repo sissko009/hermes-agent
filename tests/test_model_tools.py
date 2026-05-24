@@ -209,6 +209,9 @@ class TestBackwardCompat:
         # Should contain well-known tools
         assert "web_search" in names
         assert "terminal" in names
+        assert "x_search" in names
+        assert "video_generate" in names
+        assert "codex_task" in names
 
     def test_get_toolset_for_tool(self):
         result = get_toolset_for_tool("web_search")
@@ -222,3 +225,6 @@ class TestBackwardCompat:
     def test_tool_to_toolset_map(self):
         assert isinstance(TOOL_TO_TOOLSET_MAP, dict)
         assert len(TOOL_TO_TOOLSET_MAP) > 0
+        assert TOOL_TO_TOOLSET_MAP["x_search"] == "x_search"
+        assert TOOL_TO_TOOLSET_MAP["video_generate"] == "video_gen"
+        assert TOOL_TO_TOOLSET_MAP["codex_task"] == "codex"

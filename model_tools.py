@@ -154,8 +154,11 @@ def _discover_tools():
         "tools.clarify_tool",
         "tools.code_execution_tool",
         "tools.delegate_tool",
+        "tools.codex_task_tool",
         "tools.process_registry",
         "tools.send_message_tool",
+        "tools.x_search_tool",
+        "tools.video_generation_tool",
         # "tools.honcho_tools",  # Removed — Honcho is now a memory provider plugin
         "tools.homeassistant_tool",
     ]

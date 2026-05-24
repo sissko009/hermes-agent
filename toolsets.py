@@ -30,13 +30,13 @@ from typing import List, Dict, Any, Set, Optional
 # Edit this once to update all platforms simultaneously.
 _HERMES_CORE_TOOLS = [
     # Web
-    "web_search", "web_extract",
+    "web_search", "web_extract", "x_search",
     # Terminal + process management
     "terminal", "process",
     # File manipulation
     "read_file", "write_file", "patch", "search_files",
-    # Vision + image generation
-    "vision_analyze", "image_generate",
+    # Vision + image/video generation
+    "vision_analyze", "image_generate", "video_generate",
     # Skills
     "skills_list", "skill_view", "skill_manage",
     # Browser automation
@@ -53,7 +53,7 @@ _HERMES_CORE_TOOLS = [
     # Clarifying questions
     "clarify",
     # Code execution + delegation
-    "execute_code", "delegate_task",
+    "execute_code", "delegate_task", "codex_task",
     # Cronjob management
     "cronjob",
     # Cross-platform messaging (gated on gateway running via check_fn)
@@ -88,6 +88,18 @@ TOOLSETS = {
     "image_gen": {
         "description": "Creative generation tools (images)",
         "tools": ["image_generate"],
+        "includes": []
+    },
+
+    "video_gen": {
+        "description": "Creative generation tools (short AI videos)",
+        "tools": ["video_generate"],
+        "includes": []
+    },
+
+    "x_search": {
+        "description": "Search X/Twitter posts, threads, and profiles via xAI",
+        "tools": ["x_search"],
         "includes": []
     },
     
@@ -161,6 +173,12 @@ TOOLSETS = {
         "tools": ["todo"],
         "includes": []
     },
+
+    "kanban": {
+        "description": "Kanban-style task breakdown and distribution using todo tracking plus subagent delegation",
+        "tools": [],
+        "includes": ["todo", "delegation"]
+    },
     
     "memory": {
         "description": "Persistent memory across sessions (personal notes + user profile)",
@@ -189,6 +207,12 @@ TOOLSETS = {
     "delegation": {
         "description": "Spawn subagents with isolated context for complex subtasks",
         "tools": ["delegate_task"],
+        "includes": []
+    },
+
+    "codex": {
+        "description": "Delegate coding tasks directly to the local Codex CLI over ACP",
+        "tools": ["codex_task"],
         "includes": []
     },
 
@@ -226,10 +250,10 @@ TOOLSETS = {
     "hermes-acp": {
         "description": "Editor integration (VS Code, Zed, JetBrains) — coding-focused tools without messaging, audio, or clarify UI",
         "tools": [
-            "web_search", "web_extract",
+            "web_search", "web_extract", "x_search",
             "terminal", "process",
             "read_file", "write_file", "patch", "search_files",
-            "vision_analyze",
+            "vision_analyze", "video_generate",
             "skills_list", "skill_view", "skill_manage",
             "browser_navigate", "browser_snapshot", "browser_click",
             "browser_type", "browser_scroll", "browser_back",
