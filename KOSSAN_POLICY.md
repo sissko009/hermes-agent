@@ -115,7 +115,15 @@ HERMES は kossan-hq の**管理外**の並行作業場所（gitlink ではな�
 
 もし将来 HERMES を kossan-hq の submodule として正式登録する場合は、親側に `.gitmodules` を作成し、`git submodule add` で登録し直す。
 
-## 10. 迷ったら
+## 10. この workspace の正本パス
+
+- 実運用で書き込み対象にする Hermes 本体は **`/mnt/c/Users/user/OneDrive/デスクトップ/kossan-hq/.hermes-parallel/hermes-agent` の1つだけ**。
+- gateway / Discord / cron / ローカルCLI で Hermes 本体を触る時は、まずこのパスを見てから作業する。
+- 別の writable clone を増やさない。役割分離は clone ではなく **profile** で行う。
+- 並行ブランチや検証が必要なら clone を増やさず **`git worktree`** を使う。
+- 実行状態の切替や profile 移行をする時は、どの service / script / alias がどのパスを見ているかを先に確認する。
+
+## 11. 迷ったら
 
 - こっさんに聞く
 - `--force` を打つ前に聞く
